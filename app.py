@@ -1,51 +1,52 @@
 from flask import Flask, request, jsonify
-import joblib
 import pandas as pd
-import datetime
+import joblib
+import socket
+import random
+import string
+
+# Charger le modèle et le scaler
+model = joblib.load('model.pkl')
+scaler = joblib.load('scaler.pkl')
 
 app = Flask(__name__)
 
-# Charger votre modèle de prédiction
-model = joblib.load('brute_force_model.pkl')  # Modèle sauvegardé au format pickle
+def encode_ip(ip_address):
+    """Convertir l'adresse IP en entier."""
+    return int.from_bytes(socket.inet_aton(ip_address), 'big')
 
-# Fonction pour analyser les tentatives de connexion
-def analyze_attempt(data):
-    username = data.get('username')
-    ip_address = data.get('ip_address')
-    time = data.get('time')
+def generate_slug(length=8):
+    """Générer un slug aléatoire de 8 caractères."""
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
-    # Lire l'historique des connexions depuis le fichier CSV
-    df = pd.read_csv('user_login.csv')  # CSV contenant les tentatives de connexion
+def block_ip(ip_address):
+    """Bloquer une IP (logique à définir, par exemple ajout à une liste noire)."""
+    print(f"IP {ip_address} bloquée.")
 
-    # Ajouter la nouvelle tentative de connexion au dataframe pour l'analyse
-    new_data = pd.DataFrame({
-        'username': [username],
-        'ip_address': [ip_address],
-        'time': [time],
-        'action': ['LOGIN'],  # Spécifier l'action ici
-        'failed_attempts': [0]  # Exemple de champ pour les tentatives échouées
-    })
-
-    # Préparer les caractéristiques pour le modèle
-    features = new_data[['username', 'ip_address', 'time']]
-
-    # Faire la prédiction
-    prediction = model.predict(features)
-
-    # Si la prédiction est > 0.5, on considère que c'est une tentative suspecte
-    if prediction[0] > 0.5:
-        return {"block_ip": ip_address, "message": "Tentative suspecte détectée"}
-    else:
-        return {"block_ip": None, "message": "Connexion normale"}
-
-@app.route('/predict', methods=['POST'])
-def predict():
+@app.route('/detect', methods=['POST'])
+def detect_attack():
+    """Endpoint pour détecter si une tentative de connexion est une attaque."""
     data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid input"}), 400
+    if not data or 'ip_address' not in data:
+        return jsonify({"error": "Données invalides"}), 400
+    
+    ip_address = data['ip_address']
+    ip_encoded = encode_ip(ip_address)
 
-    result = analyze_attempt(data)
-    return jsonify(result)
+    # Créer un DataFrame pour la nouvelle tentative
+    new_data = pd.DataFrame([[ip_encoded, 0, 1]], columns=['ip_encoded', 'time_diff', 'Success'])  # Ajoutez votre logique
+
+    # Appliquer le scaler et faire une prédiction
+    new_data_scaled = scaler.transform(new_data)
+    prediction = model.predict(new_data_scaled)
+    
+    # Si l'anomalie est détectée (-1), bloquer l'IP
+    if prediction[0] == -1:
+        block_ip(ip_address)
+        slug = generate_slug()
+        return jsonify({"status": "blocked", "ip_address": ip_address, "slug": slug})
+    
+    return jsonify({"status": "allowed", "ip_address": ip_address})
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')

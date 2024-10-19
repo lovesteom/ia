@@ -1,27 +1,33 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import IsolationForest
 import joblib
+import socket
 
-# Charger les données depuis le fichier CSV
-data = pd.read_csv('login_history.csv')
+# Charger les données des tentatives de connexion
+data = pd.read_csv('user_login.csv')
 
-# Prétraitement des données
-X = data[['ip_address', 'user_agent', 'timestamp']]  # Colonnes pertinentes
-y = data['is_brute_force']  # Colonne indiquant si c'est une attaque brute force
+# Encodage des adresses IP en entiers
+data['ip_encoded'] = data['IP Address'].apply(lambda x: int.from_bytes(socket.inet_aton(x), 'big'))
 
-# Séparer les données en ensembles d'entraînement et de test
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+# Calculer la différence de temps entre les tentatives (en secondes)
+data['Timestamp'] = pd.to_datetime(data['Timestamp'])
+data['time_diff'] = data['Timestamp'].diff().dt.total_seconds().fillna(0)
 
-# Entraîner le modèle
-model = RandomForestClassifier()
-model.fit(X_train, y_train)
+# Préparer les données d'entraînement
+features = ['ip_encoded', 'time_diff', 'Success']
+X = data[features]
 
-# Évaluer le modèle
-y_pred = model.predict(X_test)
-accuracy = accuracy_score(y_test, y_pred)
-print(f"Accuracy: {accuracy * 100:.2f}%")
+# Normaliser les données
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-# Sauvegarder le modèle entraîné
-joblib.dump(model, 'brute_force_model.pkl')
+# Entraîner un modèle d'Isolation Forest pour la détection d'anomalies
+model = IsolationForest(contamination=0.05, random_state=42)
+model.fit(X_scaled)
+
+# Sauvegarder le modèle et le scaler pour une utilisation ultérieure
+joblib.dump(model, 'model.pkl')
+joblib.dump(scaler, 'scaler.pkl')
+
+print("Modèle entraîné et sauvegardé.")
